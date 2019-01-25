@@ -13,7 +13,6 @@ pkgs.haskell.lib.buildStackProject {
                              libxkbcommon
                              zlib
                              git
-                             godot
                              xorg.libX11
                              udev
                              cabal-install
