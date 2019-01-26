@@ -24,6 +24,7 @@ dependencies:
   - containers
   - lens
   - clock
+  - stm
   - raw-strings-qq
   - inline-c
   - libinput
@@ -67,10 +68,6 @@ executables:
   haskell-mcwayface-exe:
     main:                Main.hs
     source-dirs:         app
-    # ghc-options:
-    # - -threaded
-    # - -rtsopts
-    # - -with-rtsopts=-N
     dependencies:
     - haskell-mcwayface
 
@@ -78,9 +75,5 @@ tests:
   haskell-mcwayface-test:
     main:                Spec.hs
     source-dirs:         test
-    # ghc-options:
-    # - -threaded
-    # - -rtsopts
-    # - -with-rtsopts=-N
     dependencies:
     - haskell-mcwayface

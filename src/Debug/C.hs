@@ -49,7 +49,7 @@ data C'WlrXCursorManager
 data C'WlrSeat
 data C'WlrOuutputLayout
 data C'WlrInputDevice
-data C'WlListener  -- HsRoots treats this type weirdly; see Marshal.hs
+data C'WlListener -- HsRoots treats this type weirdly; see Marshal.hs
 
 -- |Here we enrich C'WlNotifyFuncT with some inner structure. Note that in C:
 -- |typedef void(* wl_notify_func_t) (struct wl_listener *listener, void *data)
@@ -65,13 +65,13 @@ initializeMcWayFaceCtx = C.context $ C.baseCtx <> C.funCtx <> mempty {
   ,  (C.TypeName "wlr_surface", [t|C'WlrSurface|])
   ,  (C.TypeName "wlr_compositor", [t|C'WlrCompositor|])
   ,  (C.TypeName "wlr_view", [t|C'WlrView|])
-  ,  (C.TypeName "wlr_output", [t|C'WlrOutput|])
+  ,  (C.Struct "wlr_output", [t|C'WlrOutput|])
   ,  (C.TypeName "wlr_keyboard", [t|C'WlrKeyboard|])
   ,  (C.TypeName "wlr_pointer", [t|C'WlrPointer|])
   ,  (C.TypeName "wlr_seat", [t|C'WlrSeat|])
   ,  (C.TypeName "wlr_desktopApi", [t|C'WlrDesktopApi|])
   ,  (C.TypeName "wlr_layer", [t|C'WlrLayer|])
-  ,  (C.TypeName "wlr_backend", [t|C'WlrBackend|])
+  ,  (C.Struct "wlr_backend", [t|C'WlrBackend|])
   ,  (C.TypeName "wlr_button", [t|C'WlrButton|])
   ,  (C.TypeName "wl_notify_func_t", [t|C'WlNotifyFuncT|])
   ,  (C.TypeName "wlr_renderer", [t|C'WlrRenderer|])
@@ -99,6 +99,7 @@ initializeMcWayFaceCtxAndIncludes = do
   C.include "<wlr/types/wlr_input_device.h>"
   C.include "<wlr/types/wlr_keyboard.h>"
   C.include "<wlr/types/wlr_matrix.h>"
+  C.include "<wlr/interfaces/wlr_output.h>"
   C.include "<wlr/types/wlr_output.h>"
   C.include "<wlr/types/wlr_output_layout.h>"
   C.include "<wlr/types/wlr_pointer.h>"
@@ -108,3 +109,5 @@ initializeMcWayFaceCtxAndIncludes = do
   C.include "<xkbcommon/xkbcommon.h>"
   C.include "<assert.h>"
   C.include "<time.h>"
+  C.include "<stdlib.h>"
+  C.include "<stdalign.h>"

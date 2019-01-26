@@ -93,6 +93,16 @@ import      Graphics.Wayland.WlRoots.XdgShellv6
 
 initializeMcWayFaceCtxAndIncludes
 
+-- | We make C'WlListener an instance of Storable so we can conveniently
+-- | pass it from C to Haskell and back via inline-C.
+-- | NOTE: This actually didn't work; see:
+-- | https://stackoverflow.com/questions/54375088/marshalling-a-struct-from-c-to-haskell-using-inline-c
+instance Storable C'WlListener where
+  sizeOf _    = fromIntegral $ [C.pure| int { sizeof(struct wl_listener) }|]
+  alignment _ = fromIntegral $ [C.pure| int { alignof(struct wl_listener) }|]
+  peek        = error "peek not implemented for C'WlListener"
+  poke _ _    = error "poke not implemented for C'WlListener"
+
 -- |FFI is a relation between C types marshalled from inline-C and C2HS
 -- |(via hsroots and its dependencies).
 class FFI inlinec chs | inlinec -> chs where
@@ -104,7 +114,6 @@ instance FFI (Ptr C'WlDisplay) DisplayServer where
   toC2HS ptrToWlDisplay = (DisplayServer ((castPtr ptrToWlDisplay) :: Ptr DisplayServer))
   toInlineC (DisplayServer ptrToDisplayServer) = (castPtr ptrToDisplayServer) :: Ptr C'WlDisplay
 
--- |Comment outed; see below.
 -- instance FFI (Ptr C'WlEventLoop) EventLoop where
 --  toC2HS ptrToWlEventLoop = (EventLoop ((castPtr ptrToWlEventLoop) :: Ptr EventLoop))
 --  toInlineC (EventLoop ptrToEventLoop) = (castPtr ptrToEventLoop) :: Ptr C'WlEventLoop
