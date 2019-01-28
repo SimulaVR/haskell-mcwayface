@@ -4,123 +4,118 @@
 module McWayFace where
 
 import           Control.Concurrent.STM.TVar
+import           Control.Monad
 import           Control.Monad.STM
 
 import           Foreign
-import           Foreign.C.Types
-import           Control.Lens
-import qualified Language.C.Inline as C
-import           Debug.C as C
-import           Debug.Marshal
+-- import qualified Language.C.Inline as C
+-- import           Debug.C as C
+-- import           Debug.Marshal
+
+
+-- TODO: Remove unneeded hsroot modules
+import Graphics.Wayland.Server
+import Graphics.Wayland.Internal.Server
+import Graphics.Wayland.WlRoots.Compositor
+import Graphics.Wayland.WlRoots.Output
+import Graphics.Wayland.WlRoots.Surface
+import Graphics.Wayland.WlRoots.Backend
+import Graphics.Wayland.Signal
+import Graphics.Wayland.WlRoots.Render
+import Graphics.Wayland.WlRoots.Render.Color
+import Graphics.Wayland.WlRoots.OutputLayout
+import Graphics.Wayland.WlRoots.Input
+import Graphics.Wayland.WlRoots.Seat
+import Graphics.Wayland.WlRoots.Cursor
+import Graphics.Wayland.WlRoots.XCursorManager
+import Graphics.Wayland.WlRoots.XdgShell
 
 import           System.Clock
 
-C.initializeMcWayFaceCtxAndIncludes
 
--- |For ease of translation, we use inline-C types for now.
-data McwServer = McwServer { _msWlDisplay :: Ptr C'WlDisplay
-                           , _msWlEventLoop :: Ptr C'WlEventLoop
-                           , _msBackend :: Ptr C'WlrBackend
-                           , _msNewOuput :: Ptr C'WlListener -- We use Ptr C'WlListener as opposed to C'WlListener to make FFI easier
-                           , _msOutputs :: TVar [McwOutput]
-                           } deriving (Eq)
+-- Turn off inline-C debugging
+-- C.initializeMcWayFaceCtxAndIncludes
 
-data McwOutput = McwOutput { _moWlrOutput :: Ptr C'WlrOutput
-                           , _moServer :: McwServer
+data McwServer = McwServer { _msWlDisplay   :: DisplayServer
+                           , _msWlEventLoop :: EventLoop
+                           , _msBackend     :: Ptr Backend
+                           , _msNewOutput   :: WlListener WlrOutput
+                           , _msOutputs     :: TVar [McwOutput]
+                           }
+
+data McwOutput = McwOutput { _moWlrOutput :: Ptr WlrOutput
+                           , _moServer    :: McwServer
                            , _moLastFrame :: TVar TimeSpec
-                        -- , _moColor :: (CFloat, CFloat, CFloat, CFloat) -- We jam this color value via inline-C
-                        -- , _moDec :: CInt -- We remove fancy color changing from this demo
-                           , _moDestroy :: Ptr C'WlListener
-                           , _moFrame :: Ptr C'WlListener
-                           } deriving (Eq)
+                           , _moColor     :: Color
+                        -- , _moDec       :: CInt -- We remove fancy color changing from this demo
+                           , _moDestroy   :: WlListener WlrOutput
+                           , _moFrame     :: WlListener WlrOutput
+                           }
+
+outputFrameNotify :: McwOutput -> (WlListener WlrOutput)
+outputFrameNotify mcwOutput = WlListener $ \ptrWlrOutput ->
+  do ptrBackend  <- (outputGetBackend ptrWlrOutput) :: IO (Ptr Backend)
+     ptrRenderer <- backendGetRenderer ptrBackend
+     let color = (_moColor mcwOutput)
+     now <- getTime Realtime
+
+     -- Draw color
+     makeOutputCurrent ptrWlrOutput
+     doRender ptrRenderer ptrWlrOutput $ do rendererClear ptrRenderer color
+                                            swapOutputBuffers ptrWlrOutput Nothing Nothing
+
+     -- Update frame timestamp
+     atomically $ writeTVar (_moLastFrame mcwOutput) now
 
 
-outputFrameNotify :: McwOutput -> Ptr C'WlListener -> Ptr () -> IO ()
-outputFrameNotify mcwOutput ptrToWlListener ptrVoid = do
-  let ptrToWlrOutput = (castPtr ptrVoid) :: Ptr C'WlrOutput
-  [C.block| void { struct wlr_output *wlr_output = $(struct wlr_output * ptrToWlrOutput);
-	           struct wlr_renderer *renderer = wlr_backend_get_renderer(wlr_output->backend);
-                   const float color[4] = {1, 0, 0, 1}; //Make our output red
-
-                   //pretty coloration code omitted
-                   wlr_output_make_current(wlr_output, NULL);
-                   wlr_renderer_begin(renderer, wlr_output->width, wlr_output->height);
-                   wlr_renderer_clear(renderer, (const float *)(&color)); //compiler complains about this second argument
-                   wlr_output_swap_buffers(wlr_output, NULL, NULL);
-                   wlr_renderer_end(renderer); }|]
-  now <- getTime Realtime
-  atomically $ writeTVar (_moLastFrame mcwOutput) now
-
-
-outputDestroyNotify :: McwServer -> McwOutput -> Ptr C'WlListener -> Ptr () -> IO ()
-outputDestroyNotify mcwServer mcwOutput ptrToWlListener ptrVoid = do
-  let ptrDestroyListener = _moDestroy mcwOutput
-  let ptrFrameListener   = _moFrame mcwOutput
-
+outputDestroyNotify :: McwServer -> McwOutput -> WlListener WlrOutput
+outputDestroyNotify mcwServer mcwOutput = WlListener $ \_ ->
+  do
+  -- The purpose of this callback is twofold:
+  --   1. Remove the McWOutput from the McwServer's [McwOutput]
+  --   2. Destroy the output's WlListener's.
+  -- Yet because WlListener's have finalizers attached to them (see Signal.hsc),
+  -- we can skip (2) and let the garbage collector do it for us.
   outputList <- atomically $ readTVar (_msOutputs mcwServer)
-  let newList = removeElemFromList mcwOutput outputList
-  atomically $ writeTVar (_msOutputs mcwServer) newList
+  let outputListCleansed = removeMcwOutputFromList mcwOutput outputList
+  atomically $ writeTVar (_msOutputs mcwServer) outputListCleansed
 
-  free (_moDestroy mcwOutput)
-  free (_moFrame mcwOutput)
+  where removeMcwOutputFromList mcwOutput list = filter (not . hasSameOutput mcwOutput) list
+        hasSameOutput mcwOutput1 mcwOutput2 = (_moWlrOutput mcwOutput1) == (_moWlrOutput mcwOutput2)
 
-  [C.block| void {
-    struct wl_listener * destroy = $(struct wl_listener * ptrDestroyListener);
-    struct wl_listener * frame   = $(struct wl_listener * ptrFrameListener);
-    wl_list_remove(&destroy->link);
-    wl_list_remove(&frame->link);
-  }|]
-  where removeElemFromList element list = filter (\e -> e/=element) list
+newOutputNotify :: McwServer -> WlListener WlrOutput
+newOutputNotify mcwServer = WlListener $ \ptrWlrOutput ->
+  do
+    -- Automatically set the output's width, height, and refresh rate.
+    setOutputModeAutomatically ptrWlrOutput
 
--- |We use the closure pattern in our wl_notify_func_t's to access McwServer state.
--- |(Compare this to the wl_container_of() trick found in wlroots C code).
-newOutputNotify :: McwServer -> Ptr C'WlListener -> Ptr () -> IO ()
-newOutputNotify mcwServer ptrToWlListener voidPtr = do
-  let ptrToWlrOutput = (castPtr voidPtr) :: Ptr C'WlrOutput
+    -- Construct an McwOutput
+    now <- getTime Realtime
+    nowTvar <- atomically (newTVar now)
+    let mcwOutput = McwOutput { _moServer = mcwServer
+                              , _moWlrOutput = ptrWlrOutput
+                              , _moColor = Color 0.6 0.2 0.8 1 -- purple
+                              , _moLastFrame = nowTvar
+                              , _moDestroy = (outputDestroyNotify mcwServer mcwOutput)
+                              , _moFrame = (outputFrameNotify mcwOutput)
+                              }
 
-  -- Sets the output's width, height, and refresh rate.
-  [C.block| void {
-                if (wl_list_length(&$(struct wlr_output * ptrToWlrOutput)->modes) > 0) {
-                  struct wlr_output_mode *mode =
-                    wl_container_of((&$(struct wlr_output * ptrToWlrOutput)->modes)->prev, mode, link);
-                  wlr_output_set_mode($(struct wlr_output * ptrToWlrOutput), mode);
-                }}|]
+    -- Connect "destroy" and "frame" callbacks to their appropriate signals.
+    -- (HsRoots uses finalizers behind the scenes; no need for us to manually
+    -- clean up any memory elsewhere in the program like we do in C.)
+    let outputSignals = getOutputSignals ptrWlrOutput
+    let destroySignal = (outSignalDestroy outputSignals) :: Ptr (WlSignal WlrOutput)
+    let frameSignal  = outSignalFrame outputSignals
+    addListener (_moDestroy mcwOutput) destroySignal
+    addListener (_moFrame   mcwOutput) frameSignal
 
-  -- Tried to do this without pointers but didn't work: https://stackoverflow.com/questions/54375088/marshalling-a-struct-from-c-to-haskell-using-inline-c
-  -- destroyListener <- [C.exp| struct wl_listener { struct wl_listener listener }|]
-  -- frameListener   <- [C.exp| struct wl_listener { struct wl_listener listener }|]
+    -- Add mcwOutput to the head of SimulaServer's _msOutputs list.
+    outputList <- atomically $ readTVar (_msOutputs mcwServer)
+    atomically $ writeTVar (_msOutputs mcwServer) (mcwOutput:outputList)
 
-  -- This memory is destroyed in outputDestroyNotify
-  ptrDestroyListener <- [C.exp| struct wl_listener* { malloc(sizeof(struct wl_listener)) }|]
-  ptrFrameListener   <- [C.exp| struct wl_listener* { malloc(sizeof(struct wl_listener)) }|]
-
-  now <- getTime Realtime
-  nowTvar <- atomically (newTVar now)
-  
-  let mcwOutput = McwOutput { _moServer = mcwServer
-                            , _moWlrOutput = ptrToWlrOutput
-                         -- , _moColor = (1,0,0,1) -- we jam this value via inline-C
-                            , _moLastFrame = nowTvar
-                            , _moDestroy = ptrDestroyListener
-                            , _moFrame = ptrFrameListener
-                            }
-
-  destroyListenerNotifyPtr <- $(C.mkFunPtr [t| Ptr C'WlListener -> Ptr () -> IO () |]) $ outputDestroyNotify mcwServer mcwOutput
-  frameListenerNotifyPtr   <- $(C.mkFunPtr [t| Ptr C'WlListener -> Ptr () -> IO () |]) $ outputFrameNotify   mcwOutput
-
-  [C.block| void { 
-                  struct wlr_output * wlr_output = $(struct wlr_output * ptrToWlrOutput);
-                  struct wl_listener * destroy = $(struct wl_listener * ptrDestroyListener);
-                  struct wl_listener * frame   = $(struct wl_listener * ptrFrameListener);
-                  wl_notify_func_t output_destroy_notify = $(wl_notify_func_t destroyListenerNotifyPtr);
-                  wl_notify_func_t output_frame_notify = $(wl_notify_func_t frameListenerNotifyPtr);
-
-                  destroy->notify = output_destroy_notify;
-                  wl_signal_add(&wlr_output->events.destroy, destroy);
-                  frame->notify = output_frame_notify;
-                  wl_signal_add(&wlr_output->events.frame, frame);
-                }|]
-
-  -- Add mcwOutput to the head of SimulaServer's _msOutputs list.
-  outputList <- atomically $ readTVar (_msOutputs mcwServer)
-  atomically $ writeTVar (_msOutputs mcwServer) (mcwOutput:outputList)
+    where setOutputModeAutomatically ptrWlrOutput = do
+            hasModes' <- hasModes ptrWlrOutput
+            when hasModes' $ do listOfPtrOutputMode <- getModes ptrWlrOutput
+                                let headMode = head listOfPtrOutputMode
+                                setOutputMode headMode ptrWlrOutput
+                                return ()
