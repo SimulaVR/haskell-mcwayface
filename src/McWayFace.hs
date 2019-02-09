@@ -65,6 +65,7 @@ outputFrameNotify mcwOutput = WlListener $ \ptrWlrOutput ->
                                             swapOutputBuffers ptrWlrOutput Nothing Nothing
 
      -- Update frame timestamp
+     putStrLn (show now)
      atomically $ writeTVar (_moLastFrame mcwOutput) now
 
 
