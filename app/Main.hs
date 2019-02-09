@@ -36,31 +36,14 @@ import Graphics.Wayland.WlRoots.XdgShell
 
 import           McWayFace
 
--- Turn off inline-C debugging
--- C.initializeMcWayFaceCtxAndIncludes
-
 main :: IO ()
-main = do displayServer <- throwIfNullPtr displayCreate
-          eventLoop     <- throwIfNullPtr (displayGetEventLoop displayServer)
+main = do displayServer <- displayCreate
+          eventLoop     <- displayGetEventLoop displayServer
           ptrBackend    <- backendAutocreate displayServer -- automatically throws if NULL
-          tvarEmptyList <- atomically (newTVar [])
-
-          let mcwServer = McwServer { _msWlDisplay = displayServer
-                                    , _msWlEventLoop = eventLoop
-                                    , _msBackend = ptrBackend
-                                    , _msNewOutput = (newOutputNotify mcwServer)
-                                    , _msOutputs = tvarEmptyList
-                                    }
 
           let newOutputSignal = (backendEvtOutput $ backendGetSignals ptrBackend) :: Ptr (WlSignal WlrOutput)
-          addListener (newOutputNotify mcwServer) newOutputSignal 
+          addListener newOutputNotify newOutputSignal
 
-          backendStart ptrBackend -- Doesn't destroy the wl_display; potential memory leak
+          backendStart ptrBackend
           displayRun displayServer
           displayDestroy displayServer
-
-
-  where throwIfNullPtr f = throwErrnoIf
-                           (\res -> ((coerce res :: Ptr ()) == nullPtr)) -- Throw error if the pointer returned by f is 0 (i.e., NULL)
-                           "wl_* initialization failed."
-                           f
